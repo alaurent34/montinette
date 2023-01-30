@@ -2,6 +2,8 @@ import pandas as pd
 from pandas.util._validators import validate_bool_kwarg
 import numpy as np
 
+from .constants import PROJECT_TIMEZONE, COUNTER_COL, DATETIME_COL, UUID_COL
+
 
 class CounterSeries(pd.Series):
     @property
@@ -14,12 +16,12 @@ class CounterSeries(pd.Series):
 
 class CounterDataFrame(pd.DataFrame):
 
-    def __init__(self, data, datetime="timestamp", counter='count', name='id',
-                  timestamp=True):
+    def __init__(self, data, datetime=DATETIME_COL, counter=COUNTER_COL, name=UUID_COL,
+                  timestamp=True, timezone='utc', **kwargs):
 
-        original2default = {datetime: "timestamp",
-                            counter: 'count',
-                            name: 'id'}
+        original2default = {datetime: DATETIME_COL,
+                            counter: COUNTER_COL,
+                            name: UUID_COL}
 
         columns = None
 
@@ -49,10 +51,11 @@ class CounterDataFrame(pd.DataFrame):
         else:
             raise TypeError('DataFrame constructor called with incompatible data and dtype: {e}'.format(e=type(data)))
 
-        super().__init__(cdf, columns=columns)
+        kwargs.pop('columns', None)
+        super().__init__(cdf, columns=columns, **kwargs)
 
         if self._has_counter_columns():
-            self._set_counter(timestamp=timestamp, inplace=True)
+            self._set_counter(timestamp=timestamp, timezone=timezone, inplace=True)
 
 
     def _detect_reset_count(self, inplace=False):
@@ -66,9 +69,9 @@ class CounterDataFrame(pd.DataFrame):
         if 'reset' in data.columns:
             data.rename(columns={'reset':'user_reset_cp'}, inplace=True)
 
-        data = data[~data['count'].isna()]
-        data = data.sort_values('timestamp')
-        data['reset'] = ((data['count'].diff() < 0) & (data['count'] <= 10)).cumsum()
+        data = data[~data[COUNTER_COL].isna()]
+        data = data.sort_values(DATETIME_COL)
+        data['reset'] = ((data[COUNTER_COL].diff() < 0) & (data[COUNTER_COL] <= 10)).cumsum()
 
         if data['reset'].value_counts().shape[0] > 1:
             print('Resets in counts have been detected. Column "reset" created.')
@@ -85,8 +88,8 @@ class CounterDataFrame(pd.DataFrame):
         else:
             data = self
 
-        while data[data.groupby('reset')['count'].diff() < 0].shape[0] > 0:
-            data = data[~(data.groupby('reset')['count'].diff() < 0)]
+        while data[data.groupby('reset')[COUNTER_COL].diff() < 0].shape[0] > 0:
+            data = data[~(data.groupby('reset')[COUNTER_COL].diff() < 0)]
 
         if not inplace:
             return data
@@ -107,7 +110,7 @@ class CounterDataFrame(pd.DataFrame):
         data._detect_reset_count(inplace=inplace)
         data._detect_count_reduction(inplace=inplace)
 
-    def _delta(self, clean=True, inplace=False):
+    def _delta(self, clean=True, inplace=False, reset_interval=0):
         inplace = validate_bool_kwarg(inplace, 'inplace')
         if not inplace:
             data = self.copy()
@@ -117,31 +120,63 @@ class CounterDataFrame(pd.DataFrame):
         if clean:
             data = data._clean()
 
-        if 'delta' in data.columns:
-            data.rename(columns={'delta':'user_delta_cp'}, inplace=True)
+        if 'count_delta' in data.columns:
+            data.rename(columns={'count_delta':'user_delta_cp'}, inplace=True)
+
+        #TODO : shoot in utils
+        # day interval
+        data['day_interval'] = ((data[DATETIME_COL].dt.dayofyear +
+                                   data[DATETIME_COL].dt.dayofyear.iloc[0]) //
+                                   reset_interval - 
+                                   data[DATETIME_COL].dt.dayofyear.iloc[0] // reset_interval)
+        data['year'] = data.timestamp.dt.year
+        data['reset_interval'] = data.year.astype(str) + ' ' + data.day_interval.astype(str)
+        data = data.assign(
+            reset_interval=data.reset_interval.replace({data.reset_interval.unique()[i]:i+1
+                                                        for i in range(len(data.reset_interval.unique()))})
+        )
+        data.drop(columns=['day_interval', 'year'], inplace=True)
 
         cpt_in_lst = []
-        for _, data_r in data.groupby('reset'):
-            data_r.sort_values('timestamp', inplace=True)
-            data_r['delta'] = data_r['count'] - data_r['count'].shift().fillna(0)
+        for _, data_r in data.groupby(['reset', 'reset_interval']):
+            data_r = data_r.sort_values(DATETIME_COL)
+            if reset_interval > 0:
+                data_r['count_delta'] = ((data_r[COUNTER_COL] - data_r[COUNTER_COL].iloc[0]) -
+                                         (data_r[COUNTER_COL] - data_r[COUNTER_COL].iloc[0]).shift().fillna(0))
+                #print(data_r)
+            else:
+                data_r['count_delta'] = data_r[COUNTER_COL] - data_r[COUNTER_COL].shift().fillna(0)
             cpt_in_lst.append(data_r)
         data = pd.concat(cpt_in_lst)
 
         if not inplace:
             return data
 
-    def get_hour_counts(self, clean=True):
+    def get_hour_counts(self, clean=True, reset_interval=0):
+        """
+        Paramaters
+        ----------
+        clean: bool (Default: True)
+            Perform a cleaning of the data before analysing it.
+        reset_interval: int (Default: 0)
+            Interval in day from which to reset the counter.
+        """
         data = self.copy()
 
-        if 'delta' not in data.columns:
-            data = data._delta(clean=clean)
+        if 'count_delta' not in data.columns:
+            data = data._delta(clean=clean, reset_interval=reset_interval)
 
-        result = data.groupby([data['timestamp'].dt.date, data['timestamp'].dt.hour])['delta'].sum().to_frame('delta')
+        result = data.groupby([data[DATETIME_COL].dt.date, data[DATETIME_COL].dt.hour])['count_delta'].sum().to_frame('count_delta')
         result.index.names = ['date', 'hr']
+
+        result = result.reset_index()
+        result['date'] = pd.to_datetime(result['date'])
+
+        result = result.set_index(['date', 'hr'])
 
         return result 
 
-    def _set_counter(self, timestamp=False, inplace=False):
+    def _set_counter(self, timestamp=False, timezone='utc', inplace=False):
 
         if not inplace:
             data = self.copy()
@@ -149,36 +184,42 @@ class CounterDataFrame(pd.DataFrame):
             data = self
 
         if timestamp:
-            data['timestamp'] = pd.to_datetime(data['timestamp'])
+            data[DATETIME_COL] = pd.to_datetime(data[DATETIME_COL])
 
-        if not pd.core.dtypes.common.is_datetime64_any_dtype(data['timestamp'].dtype):
-            data['timestamp'] = pd.to_datetime(data['timestamp'])
+        if not pd.core.dtypes.common.is_datetime64_any_dtype(data[DATETIME_COL].dtype):
+            data[DATETIME_COL] = pd.to_datetime(data[DATETIME_COL])
+        
+        if not data[DATETIME_COL].dt.tz :
+            data[DATETIME_COL] = data[DATETIME_COL].dt.tz_localize(timezone)
+        if data[DATETIME_COL].dt.tz.__str__().lower != PROJECT_TIMEZONE.lower():
+            data[DATETIME_COL] = data[DATETIME_COL].dt.tz_convert(PROJECT_TIMEZONE)
 
-        if not pd.core.dtypes.common.is_float_dtype(data['count'].dtype):
-            data['count'] = data['count'].astype("float")
+        if not pd.core.dtypes.common.is_float_dtype(data[COUNTER_COL].dtype):
+            data[COUNTER_COL] = data[COUNTER_COL].astype("float")
 
-        if not pd.core.dtypes.common.is_string_dtype(data['id'].dtype):
-            data['id'] = data['id'].astype(str)
+        if not pd.core.dtypes.common.is_string_dtype(data[UUID_COL].dtype):
+            data[UUID_COL] = data[UUID_COL].astype(str)
+
 
         if not inplace:
             return data
 
     def _has_counter_columns(self):
 
-        if ('count' in self) and ('timestamp' in self) and ('id' in self):
+        if (COUNTER_COL in self) and (DATETIME_COL in self) and (UUID_COL in self):
             return True
 
         return False
 
     def _is_counterframe(self):
 
-        if (('count' in self) and
-                (pd.core.dtypes.common.is_float_dtype(self['count']) or
-                 pd.core.dtypes.common.is_integer_dtype(self['count']))) \
-            and (('timestamp' in self) and
-                 pd.core.dtypes.common.is_datetime64_any_dtype(self['timestamp'])) \
-            and (('id' in self) and
-                (pd.core.dtypes.common.is_string_dtype(self['id']))):
+        if ((COUNTER_COL in self) and
+                (pd.core.dtypes.common.is_float_dtype(self[COUNTER_COL]) or
+                 pd.core.dtypes.common.is_integer_dtype(self[COUNTER_COL]))) \
+            and ((DATETIME_COL in self) and
+                 pd.core.dtypes.common.is_datetime64_any_dtype(self[DATETIME_COL])) \
+            and ((UUID_COL in self) and
+                (pd.core.dtypes.common.is_string_dtype(self[UUID_COL]))):
             return True
 
         return False
