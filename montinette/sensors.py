@@ -123,12 +123,12 @@ class CounterDataFrame(pd.DataFrame):
         if 'count_delta' in data.columns:
             data.rename(columns={'count_delta':'user_delta_cp'}, inplace=True)
 
-        #TODO : shoot in utils
+        #TODO : shoot in utils, useless here. Needed while cumsum
         # day interval
         data['day_interval'] = ((data[DATETIME_COL].dt.dayofyear +
                                    data[DATETIME_COL].dt.dayofyear.iloc[0]) //
                                    reset_interval - 
-                                   data[DATETIME_COL].dt.dayofyear.iloc[0] // reset_interval)
+                                   data[DATETIME_COL].dt.dayofyear.iloc[0] // reset_interval) if reset_interval > 0 else 0
         data['year'] = data.timestamp.dt.year
         data['reset_interval'] = data.year.astype(str) + ' ' + data.day_interval.astype(str)
         data = data.assign(
