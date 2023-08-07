@@ -60,7 +60,7 @@ class CounterDataFrame(pd.DataFrame):
 
     def _detect_reset_count(self, inplace=False):
         inplace = validate_bool_kwarg(inplace, 'inplace')
-        
+
         if not inplace:
             data = self.copy()
         else:
@@ -93,7 +93,7 @@ class CounterDataFrame(pd.DataFrame):
 
         if not inplace:
             return data
-    
+
     def _clean(self, inplace=False):
         inplace = validate_bool_kwarg(inplace, 'inplace')
         if not inplace:
@@ -106,7 +106,7 @@ class CounterDataFrame(pd.DataFrame):
         if not inplace:
             data = data._detect_reset_count()._detect_count_reduction()
             return data
-        
+
         data._detect_reset_count(inplace=inplace)
         data._detect_count_reduction(inplace=inplace)
 
@@ -127,7 +127,7 @@ class CounterDataFrame(pd.DataFrame):
         # day interval
         data['day_interval'] = ((data[DATETIME_COL].dt.dayofyear +
                                    data[DATETIME_COL].dt.dayofyear.iloc[0]) //
-                                   reset_interval - 
+                                   reset_interval -
                                    data[DATETIME_COL].dt.dayofyear.iloc[0] // reset_interval) if reset_interval > 0 else 0
         data['year'] = data.timestamp.dt.year
         data['reset_interval'] = data.year.astype(str) + ' ' + data.day_interval.astype(str)
@@ -174,7 +174,7 @@ class CounterDataFrame(pd.DataFrame):
 
         result = result.set_index(['date', 'hr'])
 
-        return result 
+        return result
 
     def _set_counter(self, timestamp=False, timezone='utc', inplace=False):
 
@@ -188,7 +188,7 @@ class CounterDataFrame(pd.DataFrame):
 
         if not pd.core.dtypes.common.is_datetime64_any_dtype(data[DATETIME_COL].dtype):
             data[DATETIME_COL] = pd.to_datetime(data[DATETIME_COL])
-        
+
         if not data[DATETIME_COL].dt.tz :
             data[DATETIME_COL] = data[DATETIME_COL].dt.tz_localize(timezone)
         if data[DATETIME_COL].dt.tz.__str__().lower != PROJECT_TIMEZONE.lower():
