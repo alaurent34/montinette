@@ -1,4 +1,30 @@
+import pandas as pd
 import numpy as np
+
+
+def reset_count_on_interval(data, interval=0, time_col='timestamp'):
+    data = data.copy()
+    data[time_col] = pd.to_datetime(data[time_col])
+    if interval > 0:
+        data['day_interval'] = (
+            (data[time_col].dt.dayofyear + data[time_col].dt.dayofyear.iloc[0]) // interval - 
+            data[time_col].dt.dayofyear.iloc[0] // interval
+        )
+    else:
+        data['day_interval'] = 0
+
+    data['year'] = data[time_col].dt.year
+    data['reset_interval'] = data.year.astype(str) + ' ' + data.day_interval.astype(str)
+    
+    data = data.assign(
+        reset_interval=data.reset_interval.replace({data.reset_interval.unique()[i]:i+1
+                                                    for i in range(len(data.reset_interval.unique()))})
+    )
+
+    data.drop(columns=['day_interval', 'year'], inplace=True)
+
+    return data
+
 
 def _to_hour_bin(a):
     """   Take a (5, n) array representing minutes duration transaction data. 
