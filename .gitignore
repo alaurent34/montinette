@@ -1,0 +1,15 @@
+# input files
+input/*
+!input/capteurs
+input/capteurs/*
+!input/capteurs/sensors_ex.csv
+
+# generated files
+output/
+
+# work notebooks 
+notebooks/*
+!notebooks/Exemple utilisation.ipynb
+
+# python
+__pycache__
